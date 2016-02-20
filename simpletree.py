@@ -275,6 +275,30 @@ class XMLSyntaxError(Exception):
   pass
 
 
+def _xml_decode(s):
+  replacements = { 'quot': '"', 'apos': "'", 'amp': '&', 'lt': '<', 'gt': '>' }
+  pos = s.find('&')
+  while pos >= 0:
+    semic = s.find(';', pos+1)
+    repl = None
+    if semic > pos + 1:
+      entity = s[pos+1:semic]
+      if entity in replacements:
+        repl = replacements[entity]
+      elif entity[0] == '#':
+        try:
+          ishex = entity[1] == 'x'
+          code = int(entity[1+(1 if ishex else 0):], 16 if ishex else 10)
+          if code < 128:
+            repl = chr(code)
+          # I have no idea how to make a unicode char out of a big integer
+        except:
+          pass
+    if repl is not None:
+      s = s[:pos] + repl + s[semic+1:]
+    pos = s.find('&', semic+1)
+  return s
+
 def _parse_attributes(tag):
   """Parses string '<tag k="..." ...>' to an element."""
   pos = 1
@@ -289,7 +313,7 @@ def _parse_attributes(tag):
     eq = tag.find('=', pos)
     quote = tag[eq+1]
     qend = tag.find(quote, eq+2)
-    el.set(tag[pos:eq], tag[eq+2:qend])
+    el.set(tag[pos:eq], _xml_decode(tag[eq+2:qend]))
     pos = qend+1
   return el
 
@@ -305,7 +329,7 @@ def _read_element(s, pos):
     if nxt > end:
       text = s[end:nxt].strip()
       if len(text):
-        el.text = text
+        el.text = _xml_decode(text)
     while s[nxt+1] != '/':
       child, nxt = _read_element(s, nxt)
       el.append(child)
@@ -316,7 +340,7 @@ def _read_element(s, pos):
   if pos > end:
     tail = s[end:pos].strip()
     if len(tail):
-      el.tail = tail
+      el.tail = _xml_decode(tail)
   return (el, pos)
 
 def fromstring(s):
@@ -360,8 +384,8 @@ def parse(f):
     return None
   return root.tree
 
-def xml_encode(s):
-  return s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
+def _xml_encode(s):
+  return s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;').replace("'", '&apos;')
 
 def tostring(el, pretty_print=False, with_tail=True, xml_declaration=False, encoding=None, prefix=''):
   result = ''
@@ -372,7 +396,7 @@ def tostring(el, pretty_print=False, with_tail=True, xml_declaration=False, enco
           encoding = el.docinfo.encoding
         else:
           encoding = 'utf-8'
-      result += '<?xml version="{0}" encoding="{1}"?>\n'.format(el.docinfo.xml_version, xml_encode(encoding))
+      result += '<?xml version="{0}" encoding="{1}"?>\n'.format(el.docinfo.xml_version, _xml_encode(encoding))
     if el.docinfo.doctype is not None:
       result += el.docinfo.doctype + '\n'
     result += tostring(el.getroot(), pretty_print=pretty_print, with_tail=with_tail)
@@ -381,12 +405,12 @@ def tostring(el, pretty_print=False, with_tail=True, xml_declaration=False, enco
   if not len(prefix) and xml_declaration:
     if encoding is None:
       encoding = 'utf-8'
-    result += '<?xml version="1.0" encoding="{0}"?>\n'.format(xml_encode(encoding))
+    result += '<?xml version="1.0" encoding="{0}"?>\n'.format(_xml_encode(encoding))
   if pretty_print:
     result += prefix
   result += '<' + el.tag
   for k, v in el.attrib.iteritems():
-    result += ' {0}="{1}"'.format(k, xml_encode(v))
+    result += ' {0}="{1}"'.format(k, _xml_encode(v))
   if len(el) == 0 and el.text is None:
     result += '/>'
     if pretty_print:
