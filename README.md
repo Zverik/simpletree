@@ -12,12 +12,6 @@ During the development I've found the built-in `xml.etree.cElementTree` (and `El
 to be an adequate replacement for `lxml.etree`, so I'm using that now. But still, this
 module is good when you process small chunks of XML.
 
-## TODO
-
-* DocType parsing
-* Proper creation of ElementTree from a root Element
-* `fromstring()`
-
 ## Author and License
 
 Written by Ilya Zverev, licensed WTFPL.

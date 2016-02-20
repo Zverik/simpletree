@@ -12,7 +12,10 @@ class DocInfo:
 class ElementTree:
   def __init__(self, root):
     self.root = root
-    self.docinfo = DocInfo()
+    if root.tree is not None:
+      self.docinfo = root.tree.docinfo
+    else:
+      self.docinfo = DocInfo()
 
   def getroot(self):
     return self.root
@@ -271,15 +274,91 @@ def iselement(el):
 class XMLSyntaxError(Exception):
   pass
 
+
+def _parse_attributes(tag):
+  """Parses string '<tag k="..." ...>' to an element."""
+  pos = 1
+  while tag[pos].isalnum() or tag[pos] in ('-', ':', '_', '.', '?'):
+    pos += 1
+  el = Element(tag[1:pos])
+  while True:
+    while pos < len(tag) and not tag[pos].isalnum() and tag[pos] not in ('/', '>'):
+      pos += 1
+    if pos == len(tag) or not tag[pos].isalnum():
+      break
+    eq = tag.find('=', pos)
+    quote = tag[eq+1]
+    qend = tag.find(quote, eq+2)
+    el.set(tag[pos:eq], tag[eq+2:qend])
+    pos = qend+1
+  return el
+
+def _read_element(s, pos):
+  """Reads one element, returns tuple (element, pos_of_next_element)."""
+  end = s.find('>', pos) + 1
+  el = _parse_attributes(s[pos:end])
+  if el is None:
+    return (None, len(s))
+  if s[end-2] != '/':
+    # Non-empty tag
+    nxt = s.find('<', end)
+    if nxt > end:
+      text = s[end:nxt].strip()
+      if len(text):
+        el.text = text
+    while s[nxt+1] != '/':
+      child, nxt = _read_element(s, nxt)
+      el.append(child)
+    if s[nxt+2:nxt+len(el.tag)+2] != el.tag:
+      raise XMLSyntaxError('Unexpected closing tag: {0} instead of {1}'.format(s[nxt+2:nxt+len(el.tag)+2], el.tag))
+    end = s.find('>', nxt+2) + 1
+  pos = s.find('<', end)
+  if pos > end:
+    tail = s[end:pos].strip()
+    if len(tail):
+      el.tail = tail
+  return (el, pos)
+
 def fromstring(s):
-  # TODO
-  return Element('root')
+  docinfo = DocInfo()
+  root = None
+  pos = s.find('<')
+  while root is None and pos < len(s):
+    if s[pos+1] == '?':
+      end = s.find('?>', pos)
+      decl = _parse_attributes(s[pos:end+1])
+      docinfo.xml_version = decl.get('version', None)
+      docinfo.encoding = decl.get('encoding', 'utf-8')
+      pos = s.find('<', end + 2)
+    elif s[pos+1] == '!':
+      # Does not support internal DTD
+      end = s.find('>', pos)
+      sqbr = s.find('[', pos)
+      if sqbr > 0 and sqbr < end:
+        # Skip entities
+        end = s.find('>', s.find(']', sqbr))
+      docinfo.doctype = s[pos:end+1]
+      sqbr = docinfo.doctype.find('[')
+      if sqbr > 0:
+        docinfo.doctype = docinfo.doctype[:sqbr].strip() + docinfo.doctype[docinfo.doctype.find(']', sqbr)+1:].strip()
+      pos = s.find('<', end+1)
+    else:
+      root, pos = _read_element(s, pos)
+      if root is None:
+        break
+  if root is not None:
+    root.tree = ElementTree(root)
+    root.tree.docinfo = docinfo
+  return root
 
 def XML(s):
   return fromstring(s)
 
 def parse(f):
-  return fromstring(f.read())
+  root = fromstring(f.read())
+  if root is None:
+    return None
+  return root.tree
 
 def xml_encode(s):
   return s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
@@ -290,7 +369,7 @@ def tostring(el, pretty_print=False, with_tail=True, xml_declaration=False, enco
     if el.docinfo.xml_version is not None:
       if encoding is None:
         if el.docinfo.encoding is not None:
-          encoding = docinfo.encoding
+          encoding = el.docinfo.encoding
         else:
           encoding = 'utf-8'
       result += '<?xml version="{0}" encoding="{1}"?>\n'.format(el.docinfo.xml_version, xml_encode(encoding))
